@@ -15,6 +15,7 @@ import argparse
 import numpy as np
 import os
 import torch
+import tifffile as tiff
 
 from video_depth_anything.video_depth import VideoDepthAnything
 from utils.dc_utils import read_video_frames, save_video
@@ -32,10 +33,11 @@ if __name__ == '__main__':
     parser.add_argument('--grayscale', action='store_true', help='do not apply colorful palette')
     parser.add_argument('--save_npz', action='store_true', help='save depths as npz')
     parser.add_argument('--save_exr', action='store_true', help='save depths as exr')
+    parser.add_argument('--save_tiff', action='store_true', help='save as riff image stack')
 
     args = parser.parse_args()
 
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    DEVICE = 'cuda:1' if torch.cuda.is_available() else 'cpu'
 
     model_configs = {
         'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
@@ -75,6 +77,8 @@ if __name__ == '__main__':
             exr_file = OpenEXR.OutputFile(output_exr, header)
             exr_file.writePixels({"Z": depth.tobytes()})
             exr_file.close()
+    if args.save_tiff:
+        tiff.imwrite(os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_depths.tiff'), depths, photometric='rgb')
 
     
 
