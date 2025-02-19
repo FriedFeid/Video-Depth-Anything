@@ -84,7 +84,7 @@ class VideoDepthAnything(nn.Module):
             NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             PrepareForNet(),
         ])
-
+        # Calculate length of appended frame list and extend
         frame_list = [frames[i] for i in range(frames.shape[0])]
         frame_step = INFER_LEN - OVERLAP
         org_video_len = len(frame_list)
@@ -92,21 +92,21 @@ class VideoDepthAnything(nn.Module):
         frame_list = frame_list + [frame_list[-1].copy()] * append_frame_len
         
         depth_list = []
-        pre_input = None
+        pre_input = None  # pre_input: [b, frames, channels, height, width] same as curr_input to calculate overlap
         for frame_id in tqdm(range(0, org_video_len, frame_step)):
             cur_list = []
             for i in range(INFER_LEN):
                 cur_list.append(torch.from_numpy(transform({'image': frame_list[frame_id+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
-            cur_input = torch.cat(cur_list, dim=1).to(device)
+            cur_input = torch.cat(cur_list, dim=1).to(device)  # cur_input: [1, 32, 3, 280, 924], [batch_size, frames, channel, height, width]; min: -3.2, max: 3.1
             if pre_input is not None:
                 cur_input[:, :OVERLAP, ...] = pre_input[:, KEYFRAMES, ...]
 
             with torch.no_grad():
                 with torch.autocast(device_type=device, enabled=(not fp32)):
-                    depth = self.forward(cur_input) # depth shape: [1, T, H, W]
+                    depth = self.forward(cur_input) # depth shape: [1, T (frames), H (height), W (width)], min: 0, max: 2390
 
             depth = depth.to(cur_input.dtype)
-            depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)
+            depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)  # Go back to input dimensions
             depth_list += [depth[i][0].cpu().numpy() for i in range(depth.shape[0])]
 
             pre_input = cur_input
