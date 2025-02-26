@@ -89,7 +89,7 @@ class DPTHeadTemporal(DPTHead):
 
         out = self.scratch.output_conv1(path_1)
         out = F.interpolate(
-            out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True
+            out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True  # What happens if we here interpolate with nearest instead of bilinear  ? might help edges ? 
         )
         ori_type = out.dtype
         with torch.autocast(device_type="cuda", enabled=False):
