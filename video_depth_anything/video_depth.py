@@ -64,6 +64,15 @@ class VideoDepthAnything(nn.Module):
         depth = F.relu(depth)
         return depth.squeeze(1).unflatten(0, (B, T)) # return shape [B, T, H, W]
     
+    def forward_single_image(self, x):
+        '''
+        
+        '''
+        # Keine warmup frames --> wait until 32 available and claculate these in one go 
+        # Include also wam up availability to measure speed
+        #         
+        return
+    
     def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False):
         frame_height, frame_width = frames[0].shape[:2]
         ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
