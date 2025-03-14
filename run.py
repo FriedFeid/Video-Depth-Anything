@@ -24,8 +24,9 @@ from torchinfo import summary
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Video Depth Anything')
     parser.add_argument('--device', type=str, help='Device Name in form cuda:0')
-    parser.add_argument('--input_video', type=str, default='./assets/example_videos/davis_rollercoaster.mp4')
+    parser.add_argument('--input_video', type=str, default='/export/data/ffeiden/data/vkitti_videos/Scene01_clone_Camera_0.mp4')
     parser.add_argument('--output_dir', type=str, default='./outputs')
+    parser.add_argument('--process_single_image', action='store_true', help='Only process individual Images instead of batches of 32')
     parser.add_argument('--input_size', type=int, default=518)
     parser.add_argument('--max_res', type=int, default=1280)
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
@@ -35,6 +36,8 @@ if __name__ == '__main__':
     parser.add_argument('--grayscale', action='store_true', help='do not apply colorful palette')
     parser.add_argument('--save_npz', action='store_true', help='save depths as npz')
     parser.add_argument('--save_tiff', action='store_true', help='save as tiff image stack')
+    parser.add_argument('--save_orig', action='store_true', help='saves the Original video as well')
+    parser.add_argument('--save_vis', action='store_true', help='saves a visualisation of the Video')
 
     args = parser.parse_args()
 
@@ -51,23 +54,33 @@ if __name__ == '__main__':
 
     frames, target_fps = read_video_frames(args.input_video, args.max_len, args.target_fps, args.max_res)
     # frames: [447, 374, 1242, 3] [frames, height, width, channels] in range 0, 255 type uint8
-    # target_fps: float 
-    depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
+    # target_fps: float
+    if args.process_single_image:
+        depths, fps = video_depth_anything.infere_single_image(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32, warmup=True)
+    else:
+        depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
     
     video_name = os.path.basename(args.input_video)
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    processed_video_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_src.mp4')
-    depth_vis_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_vis.mp4')
-    save_video(frames, processed_video_path, fps=fps)
-    save_video(depths, depth_vis_path, fps=fps, is_depths=True, grayscale=args.grayscale, spectral=True if not args.grayscale else False)
+    if args.process_single_image:
+        name = f'Single_VideoDepthAny_{args.encoder}_'+os.path.splitext(video_name)[0]
+    else:
+        name = f'VideoDepthAny_{args.encoder}_'+os.path.splitext(video_name)[0]
+
+    processed_video_path = os.path.join(args.output_dir, name+'_src.mp4')
+    depth_vis_path = os.path.join(args.output_dir, name+'_vis.mp4')
+    if args.save_orig:
+        save_video(frames, processed_video_path, fps=fps)
+    if args.save_vis:
+        save_video(depths, depth_vis_path, fps=fps, is_depths=True, grayscale=args.grayscale, spectral=True if not args.grayscale else False)
 
     if args.save_npz:
-        depth_npz_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_depths.npz')
+        depth_npz_path = os.path.join(args.output_dir, name+'_depths.npz')
         np.savez_compressed(depth_npz_path, depths=depths)
     if args.save_tiff:
-        tiff.imwrite(os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_depths.tiff'), depths, photometric='rgb')
+        tiff.imwrite(os.path.join(args.output_dir, name+'_depths.tiff'), depths, photometric='rgb')
 
     
 

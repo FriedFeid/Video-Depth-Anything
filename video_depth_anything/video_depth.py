@@ -64,14 +64,92 @@ class VideoDepthAnything(nn.Module):
         depth = F.relu(depth)
         return depth.squeeze(1).unflatten(0, (B, T)) # return shape [B, T, H, W]
     
-    def forward_single_image(self, x):
+    def forward_single_image(self, x, motion_features):
         '''
+        :param x: Image of size [1, 1, 3, height, width]
+        :type x: torch.Tensor
+        '''
+        B, T, C, H, W = x.shape
+        patch_h, patch_w = H // 14, W // 14
+        features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
+
+        single_depth, layer_3, layer_4 = self.head.foward_single_image(features, patch_h=patch_h, patch_w=patch_w, frame_length=32,
+                                                                       motion_features=motion_features)
+        single_depth = F.interpolate(single_depth, size=(H, W), mode="bilinear", align_corners=True)
+        single_depth = F.relu(single_depth)
+        motion_features = (layer_3, layer_4)
+        return single_depth.squeeze(1).unflatten(0, (B, T)), motion_features
+
+    def infere_single_image(self, frames, target_fps, input_size=518, device='cuda', fp32=False, warmup=True):
+        '''
+        :param frames: List of all frames in the Video
+        :type frames: List
+        :param target_fps: Number of fps for the final video
+        :type target_fps: int
+        :param input_size: Input size to calculate the ratio for more efficient processing
+        :type input_size: int
+        :param device: device to put data on (same as model)
+        :type device: str
+        :param fp32: Specifises if floating point 32 are used or floating point 16
+        :type fp32: bool
+        :param warmup: If set to true the first prediction will be done after 32 frames. 
+                       Otherwise it will predict the first 32 frames in the "normal" mode
+        :type warmup: bool
+        '''
+        frame_height, frame_width = frames[0].shape[:2]
+        ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
+        if ratio > 1.78:  # we recommend to process video with ratio smaller than 16:9 due to memory limitation
+            input_size = int(input_size * 1.777 / ratio)
+            input_size = round(input_size / 14) * 14
         
-        '''
-        # Keine warmup frames --> wait until 32 available and claculate these in one go 
-        # Include also wam up availability to measure speed
-        #         
-        return
+        transform = Compose([
+            Resize(
+                width=input_size,
+                height=input_size,
+                resize_target=False,
+                keep_aspect_ratio=True,
+                ensure_multiple_of=14,
+                resize_method='lower_bound',
+                image_interpolation_method=cv2.INTER_CUBIC,
+            ),
+            NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            PrepareForNet(),
+        ])
+        # Calculate length of appended frame list and extend
+        frame_list = [frames[i] for i in range(frames.shape[0])]
+        org_video_len = len(frame_list)
+
+        depth_list = []
+        motion_features  = None
+        if warmup:
+            layer_3, layer_4 = [], []
+            for i in tqdm(range(len(frame_list))):
+                cur_frame = torch.from_numpy(transform({'image': frame_list[i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0).to(device)
+                if i < 32:
+                    B, F_, C, H, W = cur_frame.shape
+                    patch_h, patch_w = H // 14, W // 14
+                    with torch.no_grad():
+                        with torch.autocast(device_type=device, enabled=(not fp32)):
+                            features = self.pretrained.get_intermediate_layers(cur_frame.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
+                            layer_3_tmp, layer_4_tmp = self.head.get_motion_features(features, patch_h, patch_w)
+                    layer_3.append(layer_3_tmp)
+                    layer_4.append(layer_4_tmp)
+                if i == 31:
+                    motion_features = (torch.cat(layer_3, dim=0), torch.cat(layer_4, dim=0))
+                
+                if motion_features is not None:
+                    with torch.no_grad():
+                        with torch.autocast(device_type=device, enabled=(not fp32)):
+                            depth, motion_features = self.forward_single_image(cur_frame, motion_features)
+                    
+                    depth = depth.to(cur_frame.dtype)
+                    depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)  # Go back to input dimensions
+                    depth_list += [depth[i][0].cpu().numpy() for i in range(depth.shape[0])]
+        
+        else:
+            raise NotImplementedError
+
+        return np.stack(depth_list[:org_video_len], axis=0), target_fps
     
     def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False):
         frame_height, frame_width = frames[0].shape[:2]

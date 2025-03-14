@@ -97,6 +97,38 @@ class DPTHeadTemporal(DPTHead):
 
         return out.to(ori_type)
     
+    def get_motion_features(self, out_features, patch_h, patch_w):
+        '''
+        :param out_features: Extracted featuers out of the DinoV2 Backbone in shape: [1, patch_size, embeddings]
+        :type out_features: torch.Tensor
+        :param patch_h: height of the batch
+        :type patch_h: int
+        :param patch_w: width of the batch
+        :type patch_w: int
+        :return:
+                layer_3 (torch.Tensor) [batch, embed, height, width]
+                layer_4 (torch.Tensor) [batch, embed, height, width]
+        :rtype: Tuple[torch.Tensor, torch.Tensor]
+        '''
+        out = []
+        for i, x in enumerate(out_features):
+            if self.use_clstoken:
+                x, cls_token = x[0], x[1]
+                readout = cls_token.unsqueeze(1).expand_as(x)
+                x = self.readout_projects[i](torch.cat((x, readout), -1))
+            else:
+                x = x[0]
+
+            x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w)).contiguous()
+
+            x = self.projects[i](x)
+            x = self.resize_layers[i](x)
+
+            out.append(x)
+
+        _, _, layer_3, layer_4 = out
+        return layer_3, layer_4
+    
     def foward_single_image(self, out_features, patch_h, patch_w, frame_length, motion_features):
         '''
         :param out_features: Extracted featuers out of the DinoV2 Backbone in shape: [1, patch_size, embeddings]
@@ -115,7 +147,7 @@ class DPTHeadTemporal(DPTHead):
             - out (torch.Tensor): Estimation of new image.
 
             - layer_3 (torch.Tensor): New layer_3 with new frame.
-            
+
             - layer_4 (torch.Tensor): New layer_4 with new frame.
         :rtype: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
         '''
@@ -133,6 +165,8 @@ class DPTHeadTemporal(DPTHead):
             x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w)).contiguous()
 
             B, T = x.shape[0] // frame_length, frame_length
+            if B == 0: 
+                B = 1
             x = self.projects[i](x)
             x = self.resize_layers[i](x)
 
