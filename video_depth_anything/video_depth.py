@@ -180,7 +180,7 @@ class VideoDepthAnything(nn.Module):
         
         depth_list = []
         pre_input = None  # pre_input: [b, frames, channels, height, width] same as curr_input to calculate overlap
-        for frame_id in tqdm(range(0, org_video_len, frame_step)):
+        for frame_id in tqdm(range(0, org_video_len, frame_step)): #frame_step 22 von 0 - 447
             cur_list = []
             for i in range(INFER_LEN):
                 cur_list.append(torch.from_numpy(transform({'image': frame_list[frame_id+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
@@ -219,23 +219,23 @@ class VideoDepthAnything(nn.Module):
                                                        np.concatenate(ref_align),
                                                        np.concatenate(np.ones_like(ref_align)==1))
 
-                pre_depth_list = depth_list_aligned[-INTERP_LEN:]
-                post_depth_list = depth_list[frame_id+align_len:frame_id+OVERLAP]
+                pre_depth_list = depth_list_aligned[-INTERP_LEN:] # Vorheriger last 8 for interpolation
+                post_depth_list = depth_list[frame_id+align_len:frame_id+OVERLAP] #Overlap frames out of predictions
                 for i in range(len(post_depth_list)):
-                    post_depth_list[i] = post_depth_list[i] * scale + shift
-                    post_depth_list[i][post_depth_list[i]<0] = 0
+                    post_depth_list[i] = post_depth_list[i] * scale + shift #scale it to fit with previous
+                    post_depth_list[i][post_depth_list[i]<0] = 0 # Clip negative
                 depth_list_aligned[-INTERP_LEN:] = get_interpolate_frames(pre_depth_list, post_depth_list)
 
-                for i in range(OVERLAP, INFER_LEN):
+                for i in range(OVERLAP, INFER_LEN): # scale 22 rest 22 frames and save as prediction
                     new_depth = depth_list[frame_id+i] * scale + shift
                     new_depth[new_depth<0] = 0
                     depth_list_aligned.append(new_depth)
 
-                ref_align = ref_align[:1]
-                for kf_id in kf_align_list[1:]:
-                    new_depth = depth_list[frame_id+kf_id] * scale + shift
+                ref_align = ref_align[:1] # Cut out last aling frame (12)
+                for kf_id in kf_align_list[1:]: # For the last aling frames (12)
+                    new_depth = depth_list[frame_id+kf_id] * scale + shift # Take the 12 frame of current pred batch and scale and shift it 
                     new_depth[new_depth<0] = 0
-                    ref_align.append(new_depth)
+                    ref_align.append(new_depth) # Means 0 stays always the same frame. Always beginning of sequence!!
             
         depth_list = depth_list_aligned
             

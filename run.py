@@ -27,6 +27,20 @@ if __name__ == '__main__':
     parser.add_argument('--input_video', type=str, default='/export/data/ffeiden/data/vkitti_videos/Scene01_clone_Camera_0.mp4')
     parser.add_argument('--output_dir', type=str, default='./outputs')
     parser.add_argument('--process_single_image', action='store_true', help='Only process individual Images instead of batches of 32')
+
+    # TODO: Implement these flags
+    parser.add_argument('--inferenz_length', type=int, default=32, help='The total amount of context frames given to the motion module.\
+                        This includes keyframes')
+    parser.add_argument('--keyframe_list', type=int, nargs='+', default=[0, 12], help='List of keyframes used. The first one must be 0.\
+                        The following index gives the position in the inferenz_length batch. This means e.g.: if second index is 12 and \
+                        inferenz_legth=32 the keyframe is 42 frames before the current frame. \
+                        ((inferenz_length) 32 - (len(keyfram_list) 2) + (value keyframe_list) 12)')
+    parser.add_argument('--align_each_new_frame', action='store_true', help='If set it will for each frame predicted use the keyframe_list\
+                         to calculate scale & shift of the current forward (forwards all keyframes) and uses the scale & shift to aling \
+                        new frame.')
+    parser.add_argument('--original', action='store_true', hlep='Runns the original model with no adjustments. WARINING: Overwrites\
+                        --process_single_image, --inferenz_lenght, --keyframe_list, align_each_new_frame')
+    
     parser.add_argument('--input_size', type=int, default=518)
     parser.add_argument('--max_res', type=int, default=1280)
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
