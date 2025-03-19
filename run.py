@@ -29,16 +29,16 @@ if __name__ == '__main__':
     parser.add_argument('--process_single_image', action='store_true', help='Only process individual Images instead of batches of 32')
 
     # TODO: Implement these flags
-    parser.add_argument('--inferenz_length', type=int, default=32, help='The total amount of context frames given to the motion module.\
+    parser.add_argument('--inference_length', type=int, default=32, help='The total amount of context frames given to the motion module.\
                         This includes keyframes')
     parser.add_argument('--keyframe_list', type=int, nargs='+', default=[0, 12], help='List of keyframes used. The first one must be 0.\
-                        The following index gives the position in the inferenz_length batch. This means e.g.: if second index is 12 and \
+                        The following index gives the position in the inference_length batch. This means e.g.: if second index is 12 and \
                         inferenz_legth=32 the keyframe is 42 frames before the current frame. \
-                        ((inferenz_length) 32 - (len(keyfram_list) 2) + (value keyframe_list) 12)')
+                        ((inference_length) 32 - (len(keyfram_list) 2) + (value keyframe_list) 12)')
     parser.add_argument('--align_each_new_frame', action='store_true', help='If set it will for each frame predicted use the keyframe_list\
                          to calculate scale & shift of the current forward (forwards all keyframes) and uses the scale & shift to aling \
                         new frame.')
-    parser.add_argument('--original', action='store_true', hlep='Runns the original model with no adjustments. WARINING: Overwrites\
+    parser.add_argument('--original', action='store_true', help='Runns the original model with no adjustments. WARINING: Overwrites\
                         --process_single_image, --inferenz_lenght, --keyframe_list, align_each_new_frame')
     
     parser.add_argument('--input_size', type=int, default=518)
@@ -54,7 +54,8 @@ if __name__ == '__main__':
     parser.add_argument('--save_vis', action='store_true', help='saves a visualisation of the Video')
 
     args = parser.parse_args()
-
+    assert max(args.keyframe_list) < args.inference_length # Adjust code to make this work as well (to use smaler widnow )
+    #TODO: sort keyframe_list to make it compatible with the code. 
     DEVICE = args.device if torch.cuda.is_available() else 'cpu'
 
     model_configs = {
@@ -70,7 +71,11 @@ if __name__ == '__main__':
     # frames: [447, 374, 1242, 3] [frames, height, width, channels] in range 0, 255 type uint8
     # target_fps: float
     if args.process_single_image:
-        depths, fps = video_depth_anything.infere_single_image(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32, warmup=True)
+        depths, fps = video_depth_anything.infere_single_image(frames, target_fps, device=DEVICE, fp32=args.fp32, input_size=args.input_size,
+                                                               inference_length=args.inference_length, keyframe_list=args.keyframe_list,
+                                                               align_each_new_frame=args.align_each_new_frame, warmup=True)
+    elif args.original:
+        depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
     else:
         depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
     

@@ -126,10 +126,10 @@ class DPTHeadTemporal(DPTHead):
 
             out.append(x)
 
-        _, _, layer_3, layer_4 = out
-        return layer_3, layer_4
+        layer_1, layer_2, layer_3, layer_4 = out
+        return layer_1, layer_2, layer_3, layer_4
     
-    def foward_single_image(self, out_features, patch_h, patch_w, frame_length, motion_features):
+    def foward_single_image(self, out_features, patch_h, patch_w, frame_length, motion_features, pred_depth_idx=None):
         '''
         :param out_features: Extracted featuers out of the DinoV2 Backbone in shape: [1, patch_size, embeddings]
         :type out_features: torch.Tensor
@@ -142,6 +142,9 @@ class DPTHeadTemporal(DPTHead):
         :param motion_features: Tuple of torch.Tensor with the layer_3 and layer_4 as input for the attention
                                 Shape [1, patch_size, embeddings]
         :type motion_features: Tuple[torch.Tensor, torch.Tensor]
+        :param pred_depth_idx: Indexes for wich features a depth should be predicted. The rest is only used for
+                               Motion feature computation
+        :type pred_depth_idx: List[int]
         
         :return: 
             - out (torch.Tensor): Estimation of new image.
@@ -174,23 +177,34 @@ class DPTHeadTemporal(DPTHead):
 
         layer_1, layer_2, layer_3, layer_4 = out
 
-        layer_1_rn = self.scratch.layer1_rn(layer_1)
-        layer_2_rn = self.scratch.layer2_rn(layer_2)
+        # Store New frame
+        layer_1_old, layer_2_old, layer_3_old, layer_4_old = motion_features
 
+        layer_1_save = torch.cat([layer_1_old, layer_1], dim=0)
+        layer_2_save = torch.cat([layer_2_old, layer_2], dim=0)
+        
+        if pred_depth_idx is not None:
+            layer_1_pred = torch.cat([layer_1_old[pred_depth_idx], layer_1], dim=0)
+            layer_2_pred = torch.cat([layer_2_old[pred_depth_idx], layer_2], dim=0)
+        else:
+            layer_1_pred = layer_1
+            layer_2_pred = layer_2
+            
+        layer_3 = torch.cat([layer_3_old, layer_3], dim=0)
+        layer_4 = torch.cat([layer_4_old, layer_4], dim=0)
+        
         # Do computation for multible Frames
-
-        # Move input one frame further
-        layer_3_old, layer_4_old = motion_features
-        layer_3 = torch.cat([layer_3_old[1:], layer_3], dim=0)
-        layer_4 = torch.cat([layer_4_old[1:], layer_4], dim=0)
+        # propagate the stashed layers 
+        layer_1_rn = self.scratch.layer1_rn(layer_1_pred)
+        layer_2_rn = self.scratch.layer2_rn(layer_2_pred)
 
         # Smallest resolution F4
-        layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
-        layer_4_rn = self.scratch.layer4_rn(layer_4)
+        layer_4_ = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        layer_4_rn = self.scratch.layer4_rn(layer_4_)
 
         # Normal resolution F3
-        layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
-        layer_3_rn = self.scratch.layer3_rn(layer_3)
+        layer_3_ = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        layer_3_rn = self.scratch.layer3_rn(layer_3_)
 
         # Upsampling to resolution F3
         path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])
@@ -204,7 +218,10 @@ class DPTHeadTemporal(DPTHead):
 
 
         # Compute the rest in single batch fassion
-        path_3 = path_3[-1].unsqueeze(0)
+        if pred_depth_idx is not None:
+            path_3 = path_3[pred_depth_idx].unsqueeze(0)
+        else:
+            path_3 = path_3[-1].unsqueeze(0)
         # Adding F2 to F3 and resizing to resolution F1
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
         # Adding F2 to F1
@@ -218,6 +235,6 @@ class DPTHeadTemporal(DPTHead):
         with torch.autocast(device_type="cuda", enabled=False):
             out = self.scratch.output_conv2(out.float())
 
-        return out.to(ori_type), layer_3, layer_4
+        return out.to(ori_type), layer_1_save, layer_2_save, layer_3, layer_4
 
         
