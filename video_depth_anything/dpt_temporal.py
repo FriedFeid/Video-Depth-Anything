@@ -219,7 +219,9 @@ class DPTHeadTemporal(DPTHead):
 
         # Compute the rest in single batch fassion
         if pred_depth_idx is not None:
-            path_3 = path_3[pred_depth_idx].unsqueeze(0)
+            pred_depth_idx.append(len(path_4) - 1) # Last image must always be predicted
+            path_3 = path_3[pred_depth_idx]
+            _ = pred_depth_idx.pop()
         else:
             path_3 = path_3[-1].unsqueeze(0)
         # Adding F2 to F3 and resizing to resolution F1
