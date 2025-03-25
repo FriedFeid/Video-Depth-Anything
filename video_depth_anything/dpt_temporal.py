@@ -50,7 +50,7 @@ class DPTHeadTemporal(DPTHead):
                            **motion_module_kwargs)
         ])
 
-    def forward(self, out_features, patch_h, patch_w, frame_length):
+    def forward(self, out_features, patch_h, patch_w, frame_length, skip_tmp_block=False):
         out = []
         for i, x in enumerate(out_features):
             if self.use_clstoken:
@@ -67,7 +67,7 @@ class DPTHeadTemporal(DPTHead):
             x = self.resize_layers[i](x)
 
             out.append(x)
-
+        # TODO: Implement skip tmp block
         layer_1, layer_2, layer_3, layer_4 = out
 
         B, T = layer_1.shape[0] // frame_length, frame_length

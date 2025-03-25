@@ -50,9 +50,16 @@ def prepare_data(frames, target_fps, input_size=518, device='cuda', fp32=False, 
     frame_list = [frames[i] for i in range(frames.shape[0])]
     cur_list = []
     next_list = []
+    take_frames = []
     for i in range(INFER_LEN):
         cur_list.append(torch.from_numpy(transform({'image': frame_list[start_frame+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
-        next_list.append(torch.from_numpy(transform({'image': frame_list[start_frame+new_frames+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
+        if i == 0:
+            take_frames.append(i)
+        else:
+            take_frames.append(i+new_frames)
+    for frame_to_take in take_frames:    
+        next_list.append(torch.from_numpy(transform({'image': frame_list[frame_to_take].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
+
     cur_input = torch.cat(cur_list, dim=1).to(device)
     next_input = torch.cat(next_list, dim=1).to(device)
     return cur_input, next_input
@@ -162,7 +169,7 @@ if __name__ == '__main__':
 
     # Visualise Features
     for name in cur_features:
-        frame = 1
+        frame = 2
         
         orig_img = cur_input[0, frame, :, :, :].detach().cpu().numpy()
         orig_img = (orig_img - orig_img.min()) / (orig_img.max() - orig_img.min())
@@ -183,13 +190,13 @@ if __name__ == '__main__':
         if 'input' in name:
             cur_vis = visualize_feature_maps(cur_features[name][0], frame=frame, fig_path=cur_save_vis)
             next_vis = visualize_feature_maps(next_features[name][0], frame=frame-1, fig_path=next_save_vis)
-            diff = cur_features[name][0][:, :, 1:, :, :] - next_features[name][0][:, :, :-1, :, :]
+            diff = cur_features[name][0][:, :, 2:, :, :] - next_features[name][0][:, :, 1:-1, :, :]
             diff_vis = visualize_feature_maps(diff,
                                             frame = frame-1, fig_path=diff_save_vis)
         else:
             cur_vis = visualize_feature_maps(cur_features[name], frame=frame, fig_path=cur_save_vis)
             next_vis = visualize_feature_maps(next_features[name], frame=frame-1, fig_path=next_save_vis)
-            diff = cur_features[name][:, :, 1:, :, :] - next_features[name][:, :, :-1, :, :]
+            diff = cur_features[name][:, :, 2:, :, :] - next_features[name][:, :, 1:-1, :, :]
             diff_vis = visualize_feature_maps(diff,
                                             frame = frame-1, fig_path=diff_save_vis)
 
