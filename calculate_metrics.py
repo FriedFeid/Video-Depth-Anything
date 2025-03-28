@@ -42,6 +42,8 @@ parser.add_argument('--dont_generate', action='store_true')
 parser.add_argument('--align_each_new_frame', action='store_true')
 parser.add_argument('--Scenes', nargs='+', default=['Scene01', 'Scene02', 'Scene06', 'Scene18', 'Scene20'], 
                     help='List of Scenes must be given as stings seperated with space')
+parser.add_argument('--skip_tmp_block', action='store_true', help='Skips temporal block (second low dimension) for \
+                    single image generation')
 
 args = parser.parse_args()
 
@@ -56,6 +58,7 @@ keyframes = args.keyframe_list
 generate = not args.dont_generate
 align = args.align_each_new_frame
 SCENE = args.Scenes
+skip_tmp_block = args.skip_tmp_block
 
 # Start running all. 
 keyframes_name = ''
@@ -66,8 +69,12 @@ if align:
     align_name = '_align'
 else:
     align_name = ''
+if skip_tmp_block:
+    skip_name = 'skiped'
+else:
+    skip_name = ''
 
-Name = f'SingleImage_{encoder}_con_{context_length}_{align_name}_keyframes_{keyframes}'
+Name = f'SingleImage_{encoder}_con_{context_length}_{align_name}_keyframes_{keyframes}_{skip_name}'
 if os.path.exists(os.path.join(root_dir, Name)):
     gen_root_dir = os.path.join(root_dir, Name)
     if generate:
@@ -93,33 +100,28 @@ path_dic['rgb'] = [p.replace('_gt.tiff', '.mp4') for p in path_dic['gt']]
 _, HEIGHT, WIDTH = tiff.imread(path_dic['gt'][0]).shape
 
 if generate:
+    cmd = ["python", "run.py", "--device", device, 
+            "--output_dir", gen_root_dir,
+            "--save_tiff", 
+            "--save_vis",
+            "--save_stats",
+            "--encoder", encoder,
+            "--keyframe_list", *keyframes,
+            "--process_single_image",
+            "--inference_length", str(context_length)]
     # Generate DepthAnythingVideo predictions with supprocess and save them in data 
     for video_path in path_dic['rgb']:
+        cmd.append("--input_video")
+        cmd.append(os.path.join(root_dir, 'gt_vids', video_path))
         if align:
-            print(device)
-            subprocess.run(["python", "run.py", "--device", device, 
-                            "--input_video", os.path.join(root_dir, 'gt_vids', video_path),
-                            "--output_dir", gen_root_dir,
-                            "--save_tiff", 
-                            "--save_vis",
-                            "--save_stats",
-                            "--encoder", encoder,
-                            "--keyframe_list", *keyframes,
-                            "--align_each_new_frame",
-                            "--process_single_image",
-                            "--inference_length", str(context_length)])
-        else:
-            subprocess.run(["python", "run.py", "--device", device, 
-                            "--input_video", os.path.join(root_dir, 'gt_vids', video_path),
-                            "--output_dir", gen_root_dir,
-                            "--save_tiff", 
-                            "--save_vis",
-                            "--save_stats",
-                            "--encoder", encoder,
-                            "--keyframe_list", *keyframes,
-                            "--process_single_image",
-                            "--inference_length", str(context_length)])
+            cmd.append("--align_each_new_frame")
+        if skip_tmp_block:
+            cmd.append("--skip_tmp_block")
+
+        # run single image
+        subprocess.run(cmd)
         
+        # run original
         subprocess.run(["python", "run.py", "--device", device, 
                         "--input_video", os.path.join(root_dir, 'gt_vids', video_path),
                         "--output_dir", gen_root_dir,
@@ -376,9 +378,50 @@ def visualise_data(data_dic, methods, scene_idx, root='.', Loss_function=None, L
     
     writer.close()
 
-#TODO: Include Metric for temporal consistency 
-#TODO: Include calculation of Average MSE after alignment (Also other metrics like inlier ration etc.)
+# Reopen logging file
+log_file = os.path.join(gen_root_dir, 'inference_log.txt')
+log_lines = []
 
+Metrics_dic = {}
+for method in vis_methods:
+    Metrics_dic[method+'_MSE'] = []
+    Metrics_dic[method+'_Abs'] = []
+
+for scene in SCENE:
+    gt_depth_vid = data_dic['gt_'+scene]
+    for method in vis_methods:
+        method_pred = data_dic[method + '_' + scene]
+        try:
+            error = np.abs(gt_depth_vid - method_pred).sum() / gt_depth_vid.size
+            MSE_err = np.mean((method_pred - gt_depth_vid)**2)
+        except ValueError:
+            warm_length = len(gt_depth_vid) - len(method_pred)
+            MSE_err = np.mean((method_pred - gt_depth_vid[warm_length:])**2)
+            log_lines.append(f'Assuming wamup length of {warm_length}')
+            error = np.abs(gt_depth_vid[warm_length:] - method_pred).sum() / gt_depth_vid.size
+        
+        log_lines.append(f'{scene} {method}: ')
+        log_lines.append('-----------------------')
+        log_lines.append(f'Abs. Error: {error:.3f}')
+        log_lines.append(f'MSE Error: {MSE_err:.3f}')
+        log_lines.append('')
+        Metrics_dic[method+'_MSE'].append(MSE_err)
+        Metrics_dic[method+'_Abs'].append(error)
+
+for method in vis_methods:
+    error = np.mean(Metrics_dic[method+'_Abs'])
+    MSE_err = np.mean(Metrics_dic[method+'_MSE'])
+
+
+    log_lines.append(f'Overall {method}: ')
+    log_lines.append('-----------------------')
+    log_lines.append(f'Abs. Error: {error:.3f}')
+    log_lines.append(f'MSE Error: {MSE_err:.3f}')
+    log_lines.append('')
+
+with open(log_file, "a") as f:
+    for line in log_lines:
+        f.write(line + "\n")
 
 visualise_data(data_dic=data_dic, root=gen_root_dir, methods=vis_methods, scene_idx=0)
 

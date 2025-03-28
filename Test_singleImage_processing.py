@@ -103,7 +103,7 @@ def visualize_feature_maps(batch, frame, fig_path, video_batch = 0, ):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Video Depth Anything')
     parser.add_argument('--device', type=str, help='Device Name in form cuda:0')
-    parser.add_argument('--input_video', type=str, default='/export/data/ffeiden/data/vkitti_videos/Scene01_clone_Camera_0.mp4')
+    parser.add_argument('--input_video', type=str, default='/export/data/ffeiden/data/vkitti_videos/gt_vids/Scene01_clone_Camera_0.mp4')
     
     parser.add_argument('--output_dir', type=str, default='./outputs')
     parser.add_argument('--input_size', type=int, default=518)

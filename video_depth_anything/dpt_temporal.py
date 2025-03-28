@@ -67,7 +67,7 @@ class DPTHeadTemporal(DPTHead):
             x = self.resize_layers[i](x)
 
             out.append(x)
-        # TODO: Implement skip tmp block
+
         layer_1, layer_2, layer_3, layer_4 = out
 
         B, T = layer_1.shape[0] // frame_length, frame_length
@@ -81,7 +81,8 @@ class DPTHeadTemporal(DPTHead):
         layer_4_rn = self.scratch.layer4_rn(layer_4)
 
         path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])
-        path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if not skip_tmp_block:
+            path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_3 = self.scratch.refinenet3(path_4, layer_3_rn, size=layer_2_rn.shape[2:])
         path_3 = self.motion_modules[3](path_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
@@ -129,7 +130,8 @@ class DPTHeadTemporal(DPTHead):
         layer_1, layer_2, layer_3, layer_4 = out
         return layer_1, layer_2, layer_3, layer_4
     
-    def foward_single_image(self, out_features, patch_h, patch_w, frame_length, motion_features, pred_depth_idx=None):
+    def foward_single_image(self, out_features, patch_h, patch_w, frame_length, motion_features, pred_depth_idx=None,
+                            skip_tmp_block=False):
         '''
         :param out_features: Extracted featuers out of the DinoV2 Backbone in shape: [1, patch_size, embeddings]
         :type out_features: torch.Tensor
@@ -209,7 +211,8 @@ class DPTHeadTemporal(DPTHead):
         # Upsampling to resolution F3
         path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])
         # Motion Handeling F4 in resolution F3
-        path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if not skip_tmp_block:
+            path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
 
         # Adding F3 to F4 and upsampling to resolution of F2
         path_3 = self.scratch.refinenet3(path_4, layer_3_rn, size=layer_2_rn.shape[2:])

@@ -92,7 +92,7 @@ if __name__ == '__main__':
     if args.process_single_image:
         depths, fps = video_depth_anything.infere_single_image(frames, target_fps, device=DEVICE, fp32=args.fp32, input_size=args.input_size,
                                                                inference_length=args.inference_length, keyframe_list=args.keyframe_list,
-                                                               align_each_new_frame=args.align_each_new_frame, warmup=True)
+                                                               align_each_new_frame=args.align_each_new_frame, warmup=True, skip_tmp_block=args.skip_tmp_block)
     elif args.original:
         depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
     else:

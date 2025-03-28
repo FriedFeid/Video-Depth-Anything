@@ -1,0 +1,96 @@
+Run: vitl 32 Single Image               keyframes [0, 12] 2025-03-26 14:50:55
+
+Times
+___________________________
+Runtime: 25.48205804824829
+Processed Frames: 416
+Total Frames: 447
+FPS (Processed): 16.325212006515972
+Raw FPS: 17.541754247386155
+
+Memory
+___________________________
+GPU Memory (mb): 5414.6396484375
+RAM Memory (mb): 3357.26953125
+
+
+Run: vits 32                keyframes [0, 12] 2025-03-26 15:05:54
+
+Times
+___________________________
+Runtime: 15.956883192062378
+Processed Frames: 447
+Total Frames: 447
+FPS (Processed): 28.012989417780318
+Raw FPS: 28.012989417780318
+
+Memory
+___________________________
+GPU Memory (mb): 4374.83349609375
+RAM Memory (mb): 4182.046875
+
+
+Run: vits 32 Single Image               keyframes [0, 12] 2025-03-26 15:07:36
+
+Times
+___________________________
+Runtime: 64.16850328445435
+Processed Frames: 416
+Total Frames: 447
+FPS (Processed): 6.4829313246703295
+Raw FPS: 6.966034380114513
+
+Memory
+___________________________
+GPU Memory (mb): 1142.30615234375
+RAM Memory (mb): 3625.28125
+
+
+Run: vits 32 Single Image               keyframes [0, 12] 2025-03-26 15:09:16
+
+Times
+___________________________
+Runtime: 13.640411615371704
+Processed Frames: 416
+Total Frames: 447
+FPS (Processed): 30.497613395419805
+Raw FPS: 32.77027208594388
+
+Memory
+___________________________
+GPU Memory (mb): 845.56982421875
+RAM Memory (mb): 3477.69921875
+
+
+Run: vits 14 Single Image               keyframes [0, 12] 2025-03-26 15:11:18
+
+Times
+___________________________
+Runtime: 13.058794975280762
+Processed Frames: 434
+Total Frames: 447
+FPS (Processed): 33.23430690362524
+Raw FPS: 34.22980457585364
+
+Memory
+___________________________
+GPU Memory (mb): 503.35498046875
+RAM Memory (mb): 3541.421875
+
+
+Run: vits 3 Single Image               keyframes [0, 1] 2025-03-26 15:13:02
+
+Times
+___________________________
+Runtime: 13.711538076400757
+Processed Frames: 445
+Total Frames: 447
+FPS (Processed): 32.45441886391285
+Raw FPS: 32.60028142060459
+
+Memory
+___________________________
+GPU Memory (mb): 380.609375
+RAM Memory (mb): 2826.67578125
+
+

@@ -64,7 +64,7 @@ class VideoDepthAnything(nn.Module):
         depth = F.relu(depth)
         return depth.squeeze(1).unflatten(0, (B, T)) # return shape [B, T, H, W]
     
-    def forward_single_image(self, x, motion_features, pred_depth_idx=None, inference_length=32):
+    def forward_single_image(self, x, motion_features, pred_depth_idx=None, inference_length=32, skip_tmp_block=False):
         '''
         :param x: Image of size [1, 1, 3, height, width]
         :type x: torch.Tensor
@@ -79,7 +79,7 @@ class VideoDepthAnything(nn.Module):
         features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
 
         single_depth, layer_1, layer_2, layer_3, layer_4 = self.head.foward_single_image(features, patch_h=patch_h, patch_w=patch_w, frame_length=inference_length,
-                                                                       motion_features=motion_features, pred_depth_idx=pred_depth_idx)
+                                                                       motion_features=motion_features, pred_depth_idx=pred_depth_idx, skip_tmp_block=skip_tmp_block)
         single_depth = F.interpolate(single_depth, size=(H, W), mode="bilinear", align_corners=True)
         single_depth = F.relu(single_depth)
         motion_features = (layer_1, layer_2, layer_3, layer_4)
@@ -90,7 +90,7 @@ class VideoDepthAnything(nn.Module):
 
     def infere_single_image(self, frames, target_fps, input_size=518, device='cuda', fp32=False, warmup=True,
                             inference_length=32, keyframe_list=[0,12],
-                            align_each_new_frame=True):
+                            align_each_new_frame=True, skip_tmp_block=False):
         '''
         :param frames: List of all frames in the Video
         :type frames: List
@@ -227,7 +227,8 @@ class VideoDepthAnything(nn.Module):
 
                     with torch.no_grad():
                         with torch.autocast(device_type=device, enabled=(not fp32)):
-                            depth, motion_features = self.forward_single_image(cur_frame, motion_features, pred_depth_idx=pred_depth_idx, inference_length=inference_length+1 )
+                            depth, motion_features = self.forward_single_image(cur_frame, motion_features, pred_depth_idx=pred_depth_idx, inference_length=inference_length+1 ,
+                                                                               skip_tmp_block=skip_tmp_block)
                             if i == inference_length:
                                 old_layer_1, old_layer_2, old_layer_3, old_layer_4 = motion_features
                             else:
