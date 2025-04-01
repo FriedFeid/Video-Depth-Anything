@@ -143,136 +143,179 @@ class VideoDepthAnything(nn.Module):
         org_video_len = len(frame_list)
 
         depth_list = []
+
         # prepare for keyframe saving and propagation
-        inference_length = inference_length - 1 # Adjust for count start at 0
-        if len(keyframe_list) > 1:
-            non_zero_keyframes = [keyframe_list[i] for i in range(1, len(keyframe_list), 1)]
-        else:
-            non_zero_keyframes = None
-        max_context_len = (inference_length + 1) - len(keyframe_list) # maximum number of consecutive frames in batch 
-        max_keyframe_context_len = (max_context_len) + (inference_length + 1 - min(non_zero_keyframes)) # maximum distance to save features for keyframes 
-        keyframe_context_len = [0]
+        max_keyframe = max(keyframe_list)
+        # How to shift the saved features to dont waste memory
+        move_motion_features = [i for i in range(inference_length+max_keyframe-1) if i != 1]
+        # Distance to current frame idx
+        distance_to_batch = [keyframe_list[idx] + (inference_length-len(keyframe_list)) for idx in range(len(keyframe_list))]
 
-        for i in range(len(non_zero_keyframes)):
-            keyframe_context_len.append((max_context_len) + (inference_length + 1 - non_zero_keyframes[i])) # maximum distance for each keyframe
+        # Now get the keyframe idx for wich we predict the next depth
 
-        keep_idx = [i for i in range(max_keyframe_context_len + 2) if i != 1] # indexes to keep ... It should only 0 stay the rest should move ?!?
-        motion_features  = None
+        # Start by checking if keyframes are within the Context interval or not. 
+        static_keyframes = []
+        for idx in range(len(keyframe_list)):
+            if inference_length > keyframe_list[idx]:
+                static_keyframes.append(inference_length - keyframe_list[idx])
+            elif inference_length <= keyframe_list[idx]:
+                static_keyframes.append(idx+1)
+        assert not len(static_keyframes) != len(set(static_keyframes)), f'Setup leads to duplicates in the keyframes: {static_keyframes}'
+
+        # Calculate The index list for the starting frames
+        use_feature_idx = []
+        if align_each_new_frame:
+            Align_idx = [] # Relative idx in prediction batch to use as alignment frame
+        for frame_idx in range(inference_length-1, inference_length+max_keyframe, 1):
+
+            tmp_batch_idx = [idx for idx in range(frame_idx-(inference_length-1), frame_idx, 1)]
+            tmp_batch_idx[0] = 0 # We always use first frame as reference
+            if align_each_new_frame:
+                align_idx_batch = [0]
+            
+            for idx, static_keyframe in enumerate(static_keyframes):
+                if static_keyframe in tmp_batch_idx:
+                    if align_each_new_frame:
+                        align_idx_batch.append(tmp_batch_idx.index(static_keyframe))
+                else:
+                    if align_each_new_frame:
+                        align_idx_batch.append(idx+1)
+                    
+                    if frame_idx-distance_to_batch[idx] <= static_keyframe:
+                        tmp_batch_idx[idx+1] = static_keyframe
+                    else:
+                        tmp_batch_idx[idx+1] = static_keyframe + (frame_idx - distance_to_batch[idx] - static_keyframe)
+            
+            use_feature_idx.append(tmp_batch_idx)
+            if align_each_new_frame:
+                Align_idx.append(align_idx_batch)
+        
+        # Prepare variables used in the loop 
+        features_f1 = None
+        features_f2 = None
+        features_f3 = None
+        features_f4 = None
+
+        depth_pred_idx = None
         old_keyframes = None
-
+        if align_each_new_frame:
+            abs_pred_depth_idx = None
+        
         if warmup:
-            layer_1, layer_2, layer_3, layer_4 = [], [], [], []
             for i in tqdm(range(len(frame_list))):
                 cur_frame = torch.from_numpy(transform({'image': frame_list[i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0).to(device)
-                # Warmup 
-                if i < inference_length:
+                
+                if i < inference_length-1:
+                    # Accumulate all motion features we need for the first prediction
                     B, F_, C, H, W = cur_frame.shape
                     patch_h, patch_w = H // 14, W // 14
                     with torch.no_grad():
                         with torch.autocast(device_type=device, enabled=(not fp32)):
                             features = self.pretrained.get_intermediate_layers(cur_frame.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
                             layer_1_tmp, layer_2_tmp, layer_3_tmp, layer_4_tmp = self.head.get_motion_features(features, patch_h, patch_w)
-                    layer_3.append(layer_3_tmp)
-                    layer_4.append(layer_4_tmp)
-                    layer_1.append(layer_1_tmp)
-                    layer_2.append(layer_2_tmp)
-                if i == inference_length:
-                    motion_features = (torch.cat(layer_1, dim=0), torch.cat(layer_2, dim=0), 
-                                       torch.cat(layer_3, dim=0), torch.cat(layer_4, dim=0))
 
-                # Predict Frames
-                if motion_features is not None:
-                    # Normal case
-                    pred_depth_idx = None
-                    # if i > max_keyframe_context_len + min(non_zero_keyframes):
-                    #     # Take only features for one batch
-                    #     motion_features = (torch.cat([old_layer_1[:len(keyframe_list)], old_layer_1[-(max_context_len-1):]], dim=0),
-                    #                         torch.cat([old_layer_2[:len(keyframe_list)], old_layer_2[-(max_context_len-1):]], dim=0),
-                    #                         torch.cat([old_layer_3[:len(keyframe_list)], old_layer_3[-(max_context_len-1):]], dim=0),
-                    #                         torch.cat([old_layer_4[:len(keyframe_list)], old_layer_4[-(max_context_len-1):]], dim=0))
-                    #     if align_each_new_frame:
-                    #         pred_depth_idx = [align for align in range(len(keyframe_list))]
+                    if i == 0:
+                        # Prepare torch tensors for saving. We want to use as less memory as possible. So we reserve the max length with 0
+                        features_f1 = torch.zeros(inference_length+max_keyframe-1, *layer_1_tmp.size()[1:]).to(device)
+                        features_f2 = torch.zeros(inference_length+max_keyframe-1, *layer_2_tmp.size()[1:]).to(device)
+                        features_f3 = torch.zeros(inference_length+max_keyframe-1, *layer_3_tmp.size()[1:]).to(device)
+                        features_f4 = torch.zeros(inference_length+max_keyframe-1, *layer_4_tmp.size()[1:]).to(device)
 
-                    # else:
-                    # Since now the keyframes lie within the motion feature array and not at the start we need to adjust for this
-                    if i == inference_length: 
-                        motion_features = motion_features
-                        if align_each_new_frame: # Predict a bunch of frames we need later on in one step 
-                            pred_depth_idx = [0]
-                            for idx in range(min(non_zero_keyframes), inference_length, 1):
-                                pred_depth_idx.append(idx)
-                    # In between case where keyframes are still within range of max_context_len
+                        # Fill in first Features
+                        features_f1[0] = layer_1_tmp[0]
+                        features_f2[0] = layer_2_tmp[0]
+                        features_f3[0] = layer_3_tmp[0]
+                        features_f4[0] = layer_4_tmp[0]
+                    
                     else:
-                        offset = i - inference_length
-                        batch_idx = 0
-                        tmp_keyframe_idx = []
+                        features_f1[i] = layer_1_tmp[0]
+                        features_f2[i] = layer_2_tmp[0]
+                        features_f3[i] = layer_3_tmp[0]
+                        features_f4[i] = layer_4_tmp[0]
+                    
+                    # Start actual predictions. 
+                else:
+                    if i < inference_length+max_keyframe:
+                        # Use the changing feature list. 
+                        predict_f1 = features_f1[use_feature_idx[i-(inference_length-1)]]
+                        predict_f2 = features_f2[use_feature_idx[i-(inference_length-1)]]
+                        predict_f3 = features_f3[use_feature_idx[i-(inference_length-1)]]
+                        predict_f4 = features_f4[use_feature_idx[i-(inference_length-1)]]
                         if align_each_new_frame:
-                            pred_depth_idx = []
-                        tmp_max_context_len = max_context_len
-                        for key_idx in [x - offset for x in keyframe_list]:
-                            if key_idx < batch_idx: # If batch 
-                                tmp_keyframe_idx.append(keyframe_list[batch_idx]) # Das Problem: Solange keyframe im batch läuft pred_depth_idx runter: passt. Danach muss aber die tmp_keyframe_idx nicht auf [0,1] sonder auf 0,keyframe bis max length überschritten wird. Danach erst auf 0,1 
-                                if align_each_new_frame:
-                                    pred_depth_idx.append(batch_idx)
-                                batch_idx += 1
+                            # Since the batch is not moved jet, the absolute frame is equal with the use_feature_idx entry of the keyframe. 
+                            abs_pred_depth_idx = [use_feature_idx[i-(inference_length-1)][tmp_idx] for tmp_idx in Align_idx[i-(inference_length-1)]]
+                            if i == inference_length-1:
+                                # We predict the first batch all Depths we need.
+                                depth_pred_idx = use_feature_idx[i-(inference_length-1)]
                             else:
-                                tmp_max_context_len += 1
-                                if align_each_new_frame:
-                                    pred_depth_idx.append(key_idx)
-                        # Take only features for one batch
-                        motion_features = (torch.cat([old_layer_1[tmp_keyframe_idx], old_layer_1[-(tmp_max_context_len-1):]], dim=0),
-                                            torch.cat([old_layer_2[tmp_keyframe_idx], old_layer_2[-(tmp_max_context_len-1):]], dim=0),
-                                            torch.cat([old_layer_3[tmp_keyframe_idx], old_layer_3[-(tmp_max_context_len-1):]], dim=0),
-                                            torch.cat([old_layer_4[tmp_keyframe_idx], old_layer_4[-(tmp_max_context_len-1):]], dim=0))
+                                depth_pred_idx = Align_idx[i-(inference_length-1)]
+                            
+                    else:
+                        # Use the last entry, since nothing is changing. We now shift the features_f1 ... itself.
+                        predict_f1 = features_f1[use_feature_idx[-1]]
+                        predict_f2 = features_f2[use_feature_idx[-1]]
+                        predict_f3 = features_f3[use_feature_idx[-1]]
+                        predict_f4 = features_f4[use_feature_idx[-1]]
+                        if align_each_new_frame:
+                            tmp_abs_pred_depth_idx = [use_feature_idx[-1][tmp_idx] for tmp_idx in Align_idx[-1]]
+                            depth_pred_idx = Align_idx[-1]
 
+                            abs_pred_depth_idx = []
+                            for idx in tmp_abs_pred_depth_idx:
+                                if idx == 0:
+                                    abs_pred_depth_idx.append(0)
+                                else:
+                                    # Because when we are here we have moved the batch already once we need to add one 
+                                    abs_pred_depth_idx.append(idx + (i - (inference_length + max_keyframe )) + 1)
+                    
+                    # Set up the motion features and predict Depth
+                    motion_features = (predict_f1, predict_f2, predict_f3, predict_f4)
                     with torch.no_grad():
                         with torch.autocast(device_type=device, enabled=(not fp32)):
-                            depth, motion_features = self.forward_single_image(cur_frame, motion_features, pred_depth_idx=pred_depth_idx, inference_length=inference_length+1 ,
+                            depth, motion_features = self.forward_single_image(cur_frame, motion_features, pred_depth_idx=depth_pred_idx, inference_length=inference_length,
                                                                                skip_tmp_block=skip_tmp_block)
-                            if i == inference_length:
-                                old_layer_1, old_layer_2, old_layer_3, old_layer_4 = motion_features
-                            else:
-                                layer_1, layer_2, layer_3, layer_4 = motion_features
-                                old_layer_1, old_layer_2, old_layer_3, old_layer_4 = (torch.cat([old_layer_1, layer_1[-1].unsqueeze(0)], dim=0),
-                                                                                      torch.cat([old_layer_2, layer_2[-1].unsqueeze(0)], dim=0),
-                                                                                      torch.cat([old_layer_3, layer_3[-1].unsqueeze(0)], dim=0),
-                                                                                      torch.cat([old_layer_4, layer_4[-1].unsqueeze(0)], dim=0))
-                                # Remove not needed features # I think this is wrong should remove always feature at position 1, that the kontext frame moves ... 
-                                if len(old_layer_3) > max_keyframe_context_len + 1: # 1 because of the 0 th frame
-                                    old_layer_1 = old_layer_1[keep_idx]
-                                    old_layer_2 = old_layer_2[keep_idx]
-                                    old_layer_3 = old_layer_3[keep_idx]
-                                    old_layer_4 = old_layer_4[keep_idx]
                     
+                    # Save new motion_features for the next step
+                    new_feature_1, new_feature_2, new_feature_3, new_feature_4 = motion_features
+                    
+                    if i < inference_length+max_keyframe-1:
+                        # As long as the maximum number has not reachted just fill in
+                        features_f1[i] = new_feature_1[0]
+                        features_f2[i] = new_feature_2[0]
+                        features_f3[i] = new_feature_3[0]
+                        features_f4[i] = new_feature_4[0]
+                    else:
+                        features_f1[:-1] = features_f1[move_motion_features]
+                        features_f2[:-1] = features_f2[move_motion_features]
+                        features_f3[:-1] = features_f3[move_motion_features]
+                        features_f4[:-1] = features_f4[move_motion_features]
+
+                        features_f1[-1] = new_feature_1[0]
+                        features_f2[-1] = new_feature_2[0]
+                        features_f3[-1] = new_feature_3[0]
+                        features_f4[-1] = new_feature_4[0]
+                    
+                    depth = depth.to(cur_frame.dtype)
+                    depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)
+
                     # Handle real time alignment
-                    if align_each_new_frame & (pred_depth_idx is not None):
-                        num_keyframes = len(pred_depth_idx)
-                        depth = depth.to(cur_frame.dtype)
-                        depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)
-                        
-                        # Start things off
+                    #TODO: check if frames are correctly picked & if alignment works correct
+                    if align_each_new_frame:
                         if old_keyframes is None:
                             old_keyframes = []
+                            depth_list += [depth[k][0].cpu().numpy() for k in range(depth.shape[0])]
                         else:
-                            keyframes = [0]
-                            for j in range(len(keyframe_context_len)):
-                                if j > 0:
-                                    keyframe_idx = i - keyframe_context_len[j]
-                                    if keyframe_idx <= j:
-                                        keyframes.append(keyframe_list[j]-min(non_zero_keyframes) + 1)
-                                    else:
-                                        keyframes.append(keyframe_list[j]-min(non_zero_keyframes) + keyframe_idx)
-                            old_keyframes = [depth_list[l][None, :] for l in keyframes]
-                            scale, shift = compute_scale_and_shift(depth[:num_keyframes, 0, :, :].cpu().numpy(), np.concatenate(old_keyframes), 
-                                                                   np.where(np.concatenate(old_keyframes) == 0., False, True)) # To not aling on sky 
-                            depth = depth[num_keyframes:] * scale + shift
-                            for k in range(depth.shape[0]):
-                                depth[k][depth[k]<0] = 0
-                        
-                        depth_list += [depth[k][0].cpu().numpy() for k in range(depth.shape[0])]
+                            cur_prediction = depth[-1][0].cpu().numpy()
+                            cur_keyframes = [depth[k][0].cpu().numpy() for k in range(len(depth_pred_idx))]
+
+                            old_keyframes = [depth_list[j] for j in abs_pred_depth_idx]
+                            scale, shift = compute_scale_and_shift(np.concatenate(cur_keyframes) if len(depth_pred_idx) > 1 else cur_keyframes,
+                                                                   np.concatenate(old_keyframes) if len(abs_pred_depth_idx) > 1 else old_keyframes,
+                                                                   np.concatenate(np.ones_like(old_keyframes)==1) if len(abs_pred_depth_idx) > 1 else np.ones_like(old_keyframes)==1)
+                            cur_prediction = cur_prediction * scale + shift
+                            
+                            depth_list.append(cur_prediction)
                     else:
-                        depth = depth.to(cur_frame.dtype)
-                        depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)  # Go back to input dimensions
                         depth_list += [depth[k][0].cpu().numpy() for k in range(depth.shape[0])]
         
         else:

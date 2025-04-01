@@ -40,6 +40,7 @@ parser.add_argument('--fps', type=int, default=25)
 parser.add_argument('--keyframe_list', type=str, nargs='+', default=['0', '12'])
 parser.add_argument('--dont_generate', action='store_true')
 parser.add_argument('--align_each_new_frame', action='store_true')
+parser.add_argument('--add_gt_stab_line', action='store_true', help='Stores an extra image with the gt Stability line image')
 parser.add_argument('--Scenes', nargs='+', default=['Scene01', 'Scene02', 'Scene06', 'Scene18', 'Scene20'], 
                     help='List of Scenes must be given as stings seperated with space')
 parser.add_argument('--skip_tmp_block', action='store_true', help='Skips temporal block (second low dimension) for \
@@ -57,6 +58,7 @@ FPS = args.fps
 keyframes = args.keyframe_list
 generate = not args.dont_generate
 align = args.align_each_new_frame
+save_gt_stab_line = args.add_gt_stab_line
 SCENE = args.Scenes
 skip_tmp_block = args.skip_tmp_block
 
@@ -74,7 +76,7 @@ if skip_tmp_block:
 else:
     skip_name = ''
 
-Name = f'SingleImage_{encoder}_con_{context_length}_{align_name}_keyframes_{keyframes}_{skip_name}'
+Name = f'New_SingleImage_{encoder}_con_{context_length}_{align_name}_keyframes_{keyframes}_{skip_name}'
 if os.path.exists(os.path.join(root_dir, Name)):
     gen_root_dir = os.path.join(root_dir, Name)
     if generate:
@@ -203,7 +205,7 @@ for key in data_dic:
 
 
 # Visualise Data
-def visualise_data(data_dic, methods, scene_idx, root='.', Loss_function=None, Loss_name='None', stability_line=0.5):
+def visualise_data(data_dic, methods, scene_idx, root='.', Loss_function=None, Loss_name='None', stability_line=0.5, save_gt_stability=False):
     # output_name 
     vis_scene = SCENE[scene_idx]
     vis_name = f'{vis_scene}_{methods}_Vis.mp4'
@@ -291,6 +293,10 @@ def visualise_data(data_dic, methods, scene_idx, root='.', Loss_function=None, L
             # Prepare Stablity image
             stability_over_time[method] = np.zeros((height, frame_count), dtype=np.float32)
     
+    # Prepare GT Stability image:
+        if save_gt_stab_line:
+            gt_stability = np.zeros((height, frame_count), dtype=np.float32)
+    
     Loss_min, Loss_max = np.inf , 0.
     for key in methods:
         min_, max_ = Loss_dict[key].min(), Loss_dict[key].max()
@@ -316,6 +322,11 @@ def visualise_data(data_dic, methods, scene_idx, root='.', Loss_function=None, L
         axs[0, 1].set_title('GT Scene')
         axs[0, 1].set_xticks([])
         axs[0, 1].set_yticks([])
+
+        # GT stability plot
+        if save_gt_stab_line:
+            gt_stability[:, t] = gt_depth_vid[t, :, stability_x_value]
+
         #Loss plot
         axs[0, 2].legend()
         if Loss_function is None:
@@ -378,6 +389,14 @@ def visualise_data(data_dic, methods, scene_idx, root='.', Loss_function=None, L
     
     writer.close()
 
+    
+    # Save gt Stability Line
+    plt.close('all')
+    gt_name = f'{vis_scene}_GT_tmpc_Vis.png'
+    plt.imshow(gt_stability, cmap='Spectral', vmin=depth_min, vmax=depth_max)
+    plt.savefig(os.path.join(root, gt_name))
+    
+
 # Reopen logging file
 log_file = os.path.join(gen_root_dir, 'inference_log.txt')
 log_lines = []
@@ -423,7 +442,7 @@ with open(log_file, "a") as f:
     for line in log_lines:
         f.write(line + "\n")
 
-visualise_data(data_dic=data_dic, root=gen_root_dir, methods=vis_methods, scene_idx=0)
+visualise_data(data_dic=data_dic, root=gen_root_dir, methods=vis_methods, scene_idx=0, save_gt_stability=save_gt_stab_line)
 
 visualise_data(data_dic=data_dic, root=gen_root_dir, methods=vis_methods, scene_idx=1)
 

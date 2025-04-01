@@ -181,9 +181,6 @@ class DPTHeadTemporal(DPTHead):
 
         # Store New frame
         layer_1_old, layer_2_old, layer_3_old, layer_4_old = motion_features
-
-        layer_1_save = torch.cat([layer_1_old, layer_1], dim=0)
-        layer_2_save = torch.cat([layer_2_old, layer_2], dim=0)
         
         if pred_depth_idx is not None:
             layer_1_pred = torch.cat([layer_1_old[pred_depth_idx], layer_1], dim=0)
@@ -192,8 +189,8 @@ class DPTHeadTemporal(DPTHead):
             layer_1_pred = layer_1
             layer_2_pred = layer_2
             
-        layer_3 = torch.cat([layer_3_old, layer_3], dim=0)
-        layer_4 = torch.cat([layer_4_old, layer_4], dim=0)
+        layer_3_ = torch.cat([layer_3_old, layer_3], dim=0)
+        layer_4_ = torch.cat([layer_4_old, layer_4], dim=0)
         
         # Do computation for multible Frames
         # propagate the stashed layers 
@@ -201,11 +198,11 @@ class DPTHeadTemporal(DPTHead):
         layer_2_rn = self.scratch.layer2_rn(layer_2_pred)
 
         # Smallest resolution F4
-        layer_4_ = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        layer_4_ = self.motion_modules[1](layer_4_.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         layer_4_rn = self.scratch.layer4_rn(layer_4_)
 
         # Normal resolution F3
-        layer_3_ = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        layer_3_ = self.motion_modules[0](layer_3_.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         layer_3_rn = self.scratch.layer3_rn(layer_3_)
 
         # Upsampling to resolution F3
@@ -240,6 +237,6 @@ class DPTHeadTemporal(DPTHead):
         with torch.autocast(device_type="cuda", enabled=False):
             out = self.scratch.output_conv2(out.float())
 
-        return out.to(ori_type), layer_1_save, layer_2_save, layer_3, layer_4
+        return out.to(ori_type), layer_1, layer_2, layer_3, layer_4
 
         

@@ -34,10 +34,9 @@ if __name__ == '__main__':
     # TODO: Implement these flags
     parser.add_argument('--inference_length', type=int, default=32, help='The total amount of context frames given to the motion module.\
                         This includes keyframes')
-    parser.add_argument('--keyframe_list', type=int, nargs='+', default=[0, 12], help='List of keyframes used. The first one must be 0.\
-                        The following index gives the position in the inference_length batch. This means e.g.: if second index is 12 and \
-                        inferenz_legth=32 the keyframe is 42 frames before the current frame. \
-                        ((inference_length) 32 - (len(keyfram_list) 2) + (value keyframe_list) 12). Default "0 12" ')
+    parser.add_argument('--keyframe_list', type=int, nargs='+', default=[20], help='List of keyframes in addition to 0 used.\
+                        The value of the keyframe gives the distance form the batch to the keyframe. \
+                        ((inference_length) 32 - (len(keyfram_list) 2) + (value keyframe_list) 12). Default "12" ')
     parser.add_argument('--align_each_new_frame', action='store_true', help='If set it will for each frame predicted use the keyframe_list\
                          to calculate scale & shift of the current forward (forwards all keyframes) and uses the scale & shift to aling \
                         new frame.')
@@ -59,8 +58,11 @@ if __name__ == '__main__':
     parser.add_argument('--save_stats', action='store_true', help='Saves out the timing and memory consumpution. As well as other stats')
 
     args = parser.parse_args()
-    assert max(args.keyframe_list) < args.inference_length # Adjust code to make this work as well (to use smaler widnow )
+    assert args.inference_length > len(args.keyframe_list) + 2, 'Inference length to small for the number of geiven keyframes'
     #TODO: sort keyframe_list to make it compatible with the code. 
+    # TODO: GPU Memory hight (only in the frist depth prediction step when we predict all depths at same time. Can we change this somehow to keep it low)
+    # TODO: Fix alignment to work better with sky. 
+    # TODO: Capture a 7 min video and analyze it for consistency 
     DEVICE = args.device if torch.cuda.is_available() else 'cpu'
 
     # Setup Logging File
