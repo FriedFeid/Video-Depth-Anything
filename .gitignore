@@ -7,4 +7,7 @@ __pycache__
 gradio*
 *.tiff
 *.mp4
+*.gif
 tmp/
+tmp_3D_vis/
+tmp_gifs/
