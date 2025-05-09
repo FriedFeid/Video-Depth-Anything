@@ -5,7 +5,7 @@ try:
 except:
     from typing_extensions import Literal
     from typing import Optional
-
+import torch
 import numpy as np
 
 import warnings
@@ -188,6 +188,34 @@ def frame_align_lstsq(prediction: DepthMap, ground_truth: DepthMap) -> Alignment
         return Alignment(ground_truth.inverse, scale, shift, ground_truth.scale, ground_truth.shift)
     scale, shift = frame_aligning_scale_shift_lstsq(prediction, ground_truth)
     return Alignment(ground_truth.inverse, scale, shift, ground_truth.scale, ground_truth.shift)
+
+def align_prediction(prediction, ground_truth, valid_depth, max_depth=80.):
+    if isinstance(prediction, torch.Tensor):
+        prediction = prediction.numpy()
+    if isinstance(ground_truth, torch.Tensor):
+        ground_truth = ground_truth.numpy()
+    if isinstance(valid_depth, torch.Tensor):
+        valid_depth = valid_depth.numpy()
+
+    gt_mask = np.ma.array(ground_truth, mask=~valid_depth)
+    prediction_mask = np.ma.array(prediction)
+    # Raw predictions (have to be) are always inverse depth
+    prediction_tmp = DepthMap(prediction_mask, inverse=True, range=None, scale=None, shift=None)
+    gt_depth_tmp = DepthMap(gt_mask, inverse=False, range=None, scale=1, shift=0)
+    # Calculate scale & shift for INVERSE depth
+    alignment = frame_align_lstsq(prediction_tmp, gt_depth_tmp)
+    scale, shift = alignment.scale, alignment.shift
+
+    # Use scale & shift to align --> This is still inverse depth here!
+    align_pred = np.clip((prediction - shift) / scale, 0., 1.)
+
+    # To make it metric we need to invert it again.
+    # Avoid division by 0
+    align_pred = np.where( align_pred == 0., 1e-4, align_pred) 
+    # Clip to max depth 
+    align_pred = np.clip(1. / align_pred, 0., max_depth)
+    
+    return align_pred, scale, shift
 
 
 def usage_example():

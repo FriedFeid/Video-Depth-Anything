@@ -44,10 +44,13 @@ def plot_scene_image(sample, image_idx):
     print(sample['intrinsics'].shape)
     print('')
 
-    print('Camera Extrinsics')
-    print(sample['extrinsics'][image_idx])
-    print(sample['extrinsics'].shape)
-    print('')
+    try: 
+        print('Camera Extrinsics')
+        print(sample['extrinsics'][image_idx])
+        print(sample['extrinsics'].shape)
+        print('')
+    except TypeError:
+        print('WARNING: No Extrinsics Found Continue without')
 
     rgb_image = torch_rgb_to_numpy_rgb(sample['image'][image_idx])
     h, w, c = rgb_image.shape
@@ -83,7 +86,10 @@ def project_image_to_pointcloud(sample, image_idx, max_depth=1_000,
     depth_map = sample['depth'][image_idx].numpy()
     valid_depth = sample['valid_depth'][image_idx].numpy()
     Intrinsics = sample['intrinsics'][image_idx].numpy()
-    Extrinsics = sample['extrinsics'][image_idx].numpy() # Da hier Cam to World
+    try:
+        Extrinsics = sample['extrinsics'][image_idx].numpy() # Da hier Cam to World
+    except TypeError:
+        Extrinsics = np.diag(np.array([1., 1., 1., 1.]))
 
     # Masking of invalid by setting to maximal Depth 
     # depth = np.where(valid_depth, depth_map, 0.)

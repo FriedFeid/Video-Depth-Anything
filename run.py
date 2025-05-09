@@ -59,7 +59,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     assert args.inference_length > len(args.keyframe_list) + 2, 'Inference length to small for the number of geiven keyframes'
-    #TODO: sort keyframe_list to make it compatible with the code. 
+    # TODO: sort keyframe_list to make it compatible with the code. 
     # TODO: GPU Memory hight (only in the frist depth prediction step when we predict all depths at same time. Can we change this somehow to keep it low)
     # TODO: Fix alignment to work better with sky. 
     # TODO: Capture a 7 min video and analyze it for consistency 
