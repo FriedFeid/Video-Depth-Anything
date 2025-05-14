@@ -303,3 +303,67 @@ GPU Memory (mb): 1348.62255859375
 RAM Memory (mb): 1803.765625
 
 
+Run: vits 32 Single Image Align each frame              keyframes [20] 2025-05-14 09:42:30
+
+Times
+___________________________
+Runtime: 405.51779961586
+Processed Frames: 446
+Total Frames: 447
+FPS (Processed): 1.0998284179448796
+Raw FPS: 1.102294400944756
+
+Memory
+___________________________
+GPU Memory (mb): 3803.47607421875
+RAM Memory (mb): 3542.546875
+
+
+Run: vits 32  Align each frame              keyframes [20] 2025-05-14 09:45:18
+
+Times
+___________________________
+Runtime: 39.315656661987305
+Processed Frames: 447
+Total Frames: 447
+FPS (Processed): 11.369516318728715
+Raw FPS: 11.369516318728715
+
+Memory
+___________________________
+GPU Memory (mb): 3395.52783203125
+RAM Memory (mb): 3976.796875
+
+
+Run: vits 32 Single Image               keyframes [20] 2025-05-14 09:49:49
+
+Times
+___________________________
+Runtime: 71.81515502929688
+Processed Frames: 416
+Total Frames: 447
+FPS (Processed): 5.792649195428089
+Raw FPS: 6.224312957587394
+
+Memory
+___________________________
+GPU Memory (mb): 1348.73681640625
+RAM Memory (mb): 3313.49609375
+
+
+Run: vits 32 Single Image Align each frame              keyframes [20] 2025-05-14 10:19:48
+
+Times
+___________________________
+Runtime: 116.89955854415894
+Processed Frames: 446
+Total Frames: 447
+FPS (Processed): 3.815241097181073
+Raw FPS: 3.823795449416905
+
+Memory
+___________________________
+GPU Memory (mb): 2540.0
+RAM Memory (mb): 3534.7578125
+
+

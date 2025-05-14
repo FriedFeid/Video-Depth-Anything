@@ -131,7 +131,7 @@ class DPTHeadTemporal(DPTHead):
         return layer_1, layer_2, layer_3, layer_4
     
     def foward_single_image(self, out_features, patch_h, patch_w, frame_length, motion_features, pred_depth_idx=None,
-                            skip_tmp_block=False):
+                            skip_tmp_block=False, max_head_pred_length=6):
         '''
         :param out_features: Extracted featuers out of the DinoV2 Backbone in shape: [1, patch_size, embeddings]
         :type out_features: torch.Tensor
@@ -147,6 +147,9 @@ class DPTHeadTemporal(DPTHead):
         :param pred_depth_idx: Indexes for wich features a depth should be predicted. The rest is only used for
                                Motion feature computation
         :type pred_depth_idx: List[int]
+        :param max_head_pred_length: Maximal frames processed by the Head. Reduce to trade runtime (during warmup)
+                                     for GPU memory consumption
+        :type max_head_pred_length: int
         
         :return: 
             - out (torch.Tensor): Estimation of new image.
@@ -225,10 +228,111 @@ class DPTHeadTemporal(DPTHead):
         else:
             path_3 = path_3[-1].unsqueeze(0)
         # Adding F2 to F3 and resizing to resolution F1
+        if path_3.size()[0] > max_head_pred_length:
+            # To aviode unneccesary GPU memory allocation for the warmup period of align each new frame. 
+            predictions = []
+            for i in range(0, path_3.size()[0], max_head_pred_length):
+                path_2 = self.scratch.refinenet2(path_3[i:i+6], layer_2_rn[i:i+6], size=layer_1_rn.shape[2:])
+                path_1 = self.scratch.refinenet1(path_2, layer_1_rn[i:i+6])
+                out = self.scratch.output_conv1(path_1)
+                out = F.interpolate(
+                    out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True  # What happens if we here interpolate with nearest instead of bilinear  ? might help edges ? 
+                )
+                ori_type = out.dtype
+                with torch.autocast(device_type="cuda", enabled=False):
+                    out = self.scratch.output_conv2(out.float())
+                predictions.append(out)
+            return torch.concat(predictions, dim=0).to(ori_type), layer_1, layer_2, layer_3, layer_4
+
+        else:
+            path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
+            # Adding F2 to F1
+            path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
+            # Output
+            out = self.scratch.output_conv1(path_1)
+            out = F.interpolate(
+                out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True  # What happens if we here interpolate with nearest instead of bilinear  ? might help edges ? 
+            )
+            ori_type = out.dtype
+            with torch.autocast(device_type="cuda", enabled=False):
+                out = self.scratch.output_conv2(out.float())
+
+            return out.to(ori_type), layer_1, layer_2, layer_3, layer_4
+
+
+class DPTHeadTemporalCrossAtt(DPTHead):
+    def __init__(self, 
+        in_channels, 
+        features=256, 
+        use_bn=False, 
+        out_channels=[256, 512, 1024, 1024], 
+        use_clstoken=False,
+        num_frames=32,
+        pe='ape'
+    ):
+        super().__init__(in_channels, features, use_bn, out_channels, use_clstoken)
+
+        assert num_frames > 0
+        motion_module_kwargs = EasyDict(num_attention_heads                = 8,
+                                        num_transformer_block              = 1,
+                                        num_attention_blocks               = 2,
+                                        temporal_max_len                   = num_frames,
+                                        zero_initialize                    = True,
+                                        pos_embedding_type                 = pe)
+
+        self.motion_modules = nn.ModuleList([
+            TemporalModule(in_channels=out_channels[2], 
+                           save_qkv=True,
+                           **motion_module_kwargs),
+            TemporalModule(in_channels=out_channels[3],
+                           save_qkv=True,
+                           **motion_module_kwargs),
+            TemporalModule(in_channels=features,
+                           save_qkv=True,
+                           **motion_module_kwargs),
+            TemporalModule(in_channels=features,
+                           save_qkv=True,
+                           **motion_module_kwargs)
+        ])
+
+    def forward(self, out_features, patch_h, patch_w, frame_length, skip_tmp_block=False):
+        out = []
+        for i, x in enumerate(out_features):
+            if self.use_clstoken:
+                x, cls_token = x[0], x[1]
+                readout = cls_token.unsqueeze(1).expand_as(x)
+                x = self.readout_projects[i](torch.cat((x, readout), -1))
+            else:
+                x = x[0]
+
+            x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w)).contiguous()
+
+            B, T = x.shape[0] // frame_length, frame_length
+            x = self.projects[i](x)
+            x = self.resize_layers[i](x)
+
+            out.append(x)
+
+        layer_1, layer_2, layer_3, layer_4 = out
+
+        B, T = layer_1.shape[0] // frame_length, frame_length
+
+        layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+
+        layer_1_rn = self.scratch.layer1_rn(layer_1)
+        layer_2_rn = self.scratch.layer2_rn(layer_2)
+        layer_3_rn = self.scratch.layer3_rn(layer_3)
+        layer_4_rn = self.scratch.layer4_rn(layer_4)
+
+        path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])
+        if not skip_tmp_block:
+            path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        path_3 = self.scratch.refinenet3(path_4, layer_3_rn, size=layer_2_rn.shape[2:])
+        path_3 = self.motion_modules[3](path_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
-        # Adding F2 to F1
         path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
-        # Output
+
         out = self.scratch.output_conv1(path_1)
         out = F.interpolate(
             out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True  # What happens if we here interpolate with nearest instead of bilinear  ? might help edges ? 
@@ -237,6 +341,4 @@ class DPTHeadTemporal(DPTHead):
         with torch.autocast(device_type="cuda", enabled=False):
             out = self.scratch.output_conv2(out.float())
 
-        return out.to(ori_type), layer_1, layer_2, layer_3, layer_4
-
-        
+        return out.to(ori_type)

@@ -40,6 +40,9 @@ class TemporalModule(nn.Module):
         temporal_max_len                   = 32,
         zero_initialize                    = True,
         pos_embedding_type                 = "ape",
+        # keyword here to process in corss attention format
+        save_qkv                           = False,
+        
     ):
         super().__init__()
 
@@ -52,6 +55,7 @@ class TemporalModule(nn.Module):
             norm_num_groups=norm_num_groups,
             temporal_max_len=temporal_max_len,
             pos_embedding_type=pos_embedding_type,
+            save_qkv=save_qkv,
         )
 
         if zero_initialize:
@@ -76,6 +80,7 @@ class TemporalTransformer3DModel(nn.Module):
         norm_num_groups                    = 32,
         temporal_max_len                   = 32,
         pos_embedding_type                 = "ape",
+        save_qkv                           = False,
     ):
         super().__init__()
 
@@ -93,6 +98,7 @@ class TemporalTransformer3DModel(nn.Module):
                     num_attention_blocks=num_attention_blocks,
                     temporal_max_len=temporal_max_len,
                     pos_embedding_type=pos_embedding_type,
+                    save_qkv=save_qkv,
                 )
                 for d in range(num_layers)
             ]
@@ -114,6 +120,7 @@ class TemporalTransformer3DModel(nn.Module):
 
         # Transformer Blocks
         for block in self.transformer_blocks:
+            # TODO: If saving qkv takes to much memory we would save here. encoder_hidden_states
             hidden_states = block(hidden_states, encoder_hidden_states=encoder_hidden_states, video_length=video_length, attention_mask=attention_mask)
 
         # output
@@ -135,6 +142,7 @@ class TemporalTransformerBlock(nn.Module):
         num_attention_blocks               = 2,
         temporal_max_len                   = 32,
         pos_embedding_type                 = "ape",
+        save_qkv                           = False,
     ):
         super().__init__()
 
@@ -146,6 +154,7 @@ class TemporalTransformerBlock(nn.Module):
                         dim_head=attention_head_dim,
                         temporal_max_len=temporal_max_len,
                         pos_embedding_type=pos_embedding_type,
+                        save_qkv=save_qkv,
                 )
                 for i in range(num_attention_blocks)
             ]
@@ -166,7 +175,7 @@ class TemporalTransformerBlock(nn.Module):
             norm_hidden_states = norm(hidden_states)
             hidden_states = attention_block(
                 norm_hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states=encoder_hidden_states, # This are the features we want to save
                 video_length=video_length,
                 attention_mask=attention_mask,
             ) + hidden_states
@@ -202,6 +211,7 @@ class TemporalAttention(CrossAttention):
             self,
             temporal_max_len                   = 32,
             pos_embedding_type                 = "ape",
+            save_qkv                           = False,
             *args, **kwargs
         ):
         super().__init__(*args, **kwargs)
@@ -211,6 +221,13 @@ class TemporalAttention(CrossAttention):
 
         self.pos_encoder = None
         self.freqs_cis = None
+        self.save_qkv = save_qkv
+        self.temporal_max_len = temporal_max_len
+        if self.save_qkv:
+            # Initialise memory
+            self.computed_k = None
+            self.computed_v = None
+
         if self.pos_embedding_type == "ape":
             self.pos_encoder = PositionalEncoding(
                 kwargs["query_dim"],
@@ -229,7 +246,11 @@ class TemporalAttention(CrossAttention):
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, video_length=None):
         d = hidden_states.shape[1]
-        hidden_states = rearrange(hidden_states, "(b f) d c -> (b d) f c", f=video_length)
+        b = hidden_states.shape[0] / video_length
+        assert b.is_integer(), 'Batchsize / video must be natural number'
+        b = int(b)
+
+        hidden_states = rearrange(hidden_states, "(b f) d c -> (b d) f c", f=video_length) # b: batch; f: frames; d: hight x width; c: channels
 
         if self.pos_encoder is not None:
             hidden_states = self.pos_encoder(hidden_states)
@@ -246,8 +267,25 @@ class TemporalAttention(CrossAttention):
             raise NotImplementedError
 
         encoder_hidden_states = encoder_hidden_states if encoder_hidden_states is not None else hidden_states
+        # TODO: This are the features we want to store as context. To save compute we should save them after they are encoded
+        # If this takes too much gpu we should save them earlier --> Encoder Hidden States: (1320, 1, 192) # batchsize * height x width, frames, channels
         key = self.to_k(encoder_hidden_states)
         value = self.to_v(encoder_hidden_states)
+        
+        if self.save_qkv:
+            if self.computed_k is None:
+                self.computed_k = key
+                self.computed_v = value
+            elif self.computed_k.size()[1] < self.temporal_max_len:
+                self.computed_k = torch.concat([self.computed_k, key], dim=1) # Concatinate along the frames axis 
+                self.computed_v = torch.concat([self.computed_v, key], dim=1)
+            else:
+                # TODO: Find a solution for keeping the right keyframes 
+                # This is only a fixed sliding window. Not very smart. No alignment possible 
+                keep_idx = torch.arange(1, self.temporal_max_len, 1)
+                self.computed_k = torch.concat([self.computed_k[:, keep_idx], key], dim=1)
+                self.computed_v = torch.concat([self.computed_v[:, keep_idx], value], dim=1)
+            key, value = self.computed_k, self.computed_v
 
         if self.freqs_cis is not None:
             seq_len = query.shape[1]

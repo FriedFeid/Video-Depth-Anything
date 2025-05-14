@@ -138,7 +138,7 @@ if __name__ == '__main__':
         process_fps = processed_frames / duration
         total_fps = total_images / duration
         # Ressource usage
-        gpu_mem_mb = torch.cuda.max_memory_allocated(DEVICE) / 1024**2  # in MB
+        gpu_mem_mb = torch.cuda.max_memory_reserved(DEVICE) / 1024**2  # in MB
         ram_mb = process.memory_info().rss / 1024**2  # in MB
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

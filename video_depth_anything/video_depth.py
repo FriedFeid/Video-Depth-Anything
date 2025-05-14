@@ -326,7 +326,6 @@ class VideoDepthAnything(nn.Module):
         else:
             return np.stack(depth_list[:org_video_len], axis=0), target_fps
     
-
     def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False, skip_tmp_block=False):
         frame_height, frame_width = frames[0].shape[:2]
         ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
